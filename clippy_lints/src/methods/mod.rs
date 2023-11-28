@@ -1150,7 +1150,7 @@ declare_clippy_lint! {
     /// ```
     #[clippy::version = "pre 1.29.0"]
     pub SINGLE_CHAR_PATTERN,
-    perf,
+    pedantic,
     "using a single-character str where a char could be used, e.g., `_.split(\"x\")`"
 }
 
