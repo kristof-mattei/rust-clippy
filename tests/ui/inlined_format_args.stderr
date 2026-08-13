@@ -396,5 +396,29 @@ LL -         panic!("{local_i32}");
 LL +         panic!("{}", local_i32);
    |
 
-error: aborting due to 33 previous errors
+error: variables should not be used directly in the format string
+  --> tests/ui/inlined_format_args.rs:101:5
+   |
+LL |     println!("{type}");
+   |     ^^^^^^^^^^^^^^^^^^
+   |
+help: change this to
+   |
+LL -     println!("{type}");
+LL +     println!("{}", r#type);
+   |
+
+error: variables should not be used directly in the format string
+  --> tests/ui/inlined_format_args.rs:122:9
+   |
+LL |         println!("{self:?}");
+   |         ^^^^^^^^^^^^^^^^^^^^
+   |
+help: change this to
+   |
+LL -         println!("{self:?}");
+LL +         println!("{:?}", self);
+   |
+
+error: aborting due to 35 previous errors
 

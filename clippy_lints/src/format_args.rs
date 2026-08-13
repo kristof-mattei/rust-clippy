@@ -29,7 +29,7 @@ use rustc_middle::ty::adjustment::{Adjust, Adjustment, DerefAdjustKind};
 use rustc_middle::ty::{self, GenericArg, List, TraitRef, Ty, TyCtxt, Unnormalized, Upcast as _};
 use rustc_session::impl_lint_pass;
 use rustc_span::edition::Edition::Edition2021;
-use rustc_span::{BytePos, Pos as _, Span, Symbol, hygiene};
+use rustc_span::{BytePos, Ident, Pos as _, Span, Symbol, hygiene};
 use rustc_trait_selection::infer::TyCtxtInferExt as _;
 use rustc_trait_selection::traits::{Obligation, ObligationCause, Selection, SelectionContext};
 
@@ -704,13 +704,13 @@ impl<'tcx> FormatArgsExpr<'_, 'tcx> {
             return;
         }
 
-        let captured_names: Vec<Symbol> = self
+        let captured_names: Vec<Ident> = self
             .format_args
             .arguments
             .all_args()
             .iter()
             .filter_map(|arg| match arg.kind {
-                FormatArgumentKind::Captured(ident) => Some(ident.name),
+                FormatArgumentKind::Captured(ident) => Some(ident),
                 _ => None,
             })
             .collect();
@@ -755,7 +755,7 @@ impl<'tcx> FormatArgsExpr<'_, 'tcx> {
         );
     }
 
-    fn collect_inlined_args_fixes(&self, captured_names: &[Symbol]) -> Option<Vec<(Span, String)>> {
+    fn collect_inlined_args_fixes(&self, captured_names: &[Ident]) -> Option<Vec<(Span, String)>> {
         let all_args = self.format_args.arguments.all_args();
         let positional_count = all_args
             .iter()
@@ -825,6 +825,7 @@ impl<'tcx> FormatArgsExpr<'_, 'tcx> {
         } else {
             hygiene::walk_chain(all_args[positional_count - 1].expr.span, self.format_args.span.ctxt())
         };
+        // Keywords are captured without `r#` (`{type}`), printing the `Ident` restores the prefix if needed
         fixes.push((
             insert_after.shrink_to_hi(),
             format!(", {}", captured_names.iter().join(", ")),

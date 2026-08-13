@@ -96,6 +96,11 @@ fn tester(fn_arg: i32) {
         //~^ inlined_format_args
     }
 
+    // keywords are captured without `r#`, the suggested argument needs it
+    let r#type = 1;
+    println!("{type}");
+    //~^ inlined_format_args
+
     // no captures, no lint
     println!("{}", local_i32);
     println!("{0}", local_i32);
@@ -106,6 +111,17 @@ fn tester(fn_arg: i32) {
     // the format string is not written at the call site, no lint
     my_println!("{local_i32}");
     with_span!(span println!("{local_i32}"));
+}
+
+#[derive(Debug)]
+struct S;
+
+impl S {
+    // `self` cannot be a raw identifier, the suggested argument stays bare
+    fn debug(&self) {
+        println!("{self:?}");
+        //~^ inlined_format_args
+    }
 }
 
 fn main() {
