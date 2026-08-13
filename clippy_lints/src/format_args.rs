@@ -71,6 +71,9 @@ declare_clippy_lint! {
     /// [`uninlined_format_args`](https://rust-lang.github.io/rust-clippy/main/index.html#uninlined_format_args);
     /// do not enable both at the same time.
     ///
+    /// ### Known problems
+    /// The suggestion rewrites only the captured placeholders, other positions are never renumbered. A numeric or implicit position referring to a named argument, e.g. `{0}` in `println!("{var} {0}", name = 1)`, would point at the wrong argument once the captured variables are appended, so such calls are linted without a suggestion.
+    ///
     /// ### Example
     /// ```no_run
     /// # let var = 42;
