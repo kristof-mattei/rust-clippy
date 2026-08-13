@@ -1,0 +1,17 @@
+error: variables should not be used directly in the format string
+  --> tests/ui/inlined_format_args_unfixable.rs:10:5
+   |
+LL |     println!("{local_i32} {0}", name = 1);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `-D clippy::inlined-format-args` implied by `-D warnings`
+   = help: to override `-D warnings` add `#[allow(clippy::inlined_format_args)]`
+
+error: variables should not be used directly in the format string
+  --> tests/ui/inlined_format_args_unfixable.rs:12:5
+   |
+LL |     println!("{local_i32} {}", name = 1);
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error: aborting due to 2 previous errors
+

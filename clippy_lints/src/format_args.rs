@@ -29,7 +29,7 @@ use rustc_middle::ty::adjustment::{Adjust, Adjustment, DerefAdjustKind};
 use rustc_middle::ty::{self, GenericArg, List, TraitRef, Ty, TyCtxt, Unnormalized, Upcast as _};
 use rustc_session::impl_lint_pass;
 use rustc_span::edition::Edition::Edition2021;
-use rustc_span::{BytePos, Pos as _, Span, Symbol};
+use rustc_span::{BytePos, Pos as _, Span, Symbol, hygiene};
 use rustc_trait_selection::infer::TyCtxtInferExt as _;
 use rustc_trait_selection::traits::{Obligation, ObligationCause, Selection, SelectionContext};
 
@@ -171,6 +171,45 @@ declare_clippy_lint! {
 
 declare_clippy_lint! {
     /// ### What it does
+    /// Detects variables captured directly in a format string, and suggests
+    /// passing them as separate arguments instead.
+    ///
+    /// ### Why restrict this?
+    /// Some projects prefer every formatted value to appear in the argument
+    /// list, keeping the format string free of variable captures.
+    ///
+    /// This lint is the inverse of
+    /// [`uninlined_format_args`](https://rust-lang.github.io/rust-clippy/main/index.html#uninlined_format_args);
+    /// do not enable both at the same time.
+    ///
+    /// ### Example
+    /// ```no_run
+    /// # let var = 42;
+    /// # let width = 1;
+    /// # let prec = 2;
+    /// format!("{var}");
+    /// format!("{var:?}");
+    /// format!("{var:width$}");
+    /// format!("{var:.prec$}");
+    /// ```
+    /// Use instead:
+    /// ```no_run
+    /// # let var = 42;
+    /// # let width = 1;
+    /// # let prec = 2;
+    /// format!("{}", var);
+    /// format!("{:?}", var);
+    /// format!("{:1$}", var, width);
+    /// format!("{:.1$}", var, prec);
+    /// ```
+    #[clippy::version = "1.99.0"]
+    pub INLINED_FORMAT_ARGS,
+    restriction,
+    "using captured variables directly in the format string"
+}
+
+declare_clippy_lint! {
+    /// ### What it does
     /// Checks for `Debug` formatting (`{:?}`) applied to an `OsStr` or `Path`.
     ///
     /// This includes:
@@ -304,6 +343,7 @@ declare_clippy_lint! {
 
 impl_lint_pass!(FormatArgs<'_> => [
     FORMAT_IN_FORMAT_ARGS,
+    INLINED_FORMAT_ARGS,
     POINTER_FORMAT,
     TO_STRING_IN_FORMAT_ARGS,
     UNINLINED_FORMAT_ARGS,
@@ -361,6 +401,8 @@ impl<'tcx> LateLintPass<'tcx> for FormatArgs<'tcx> {
             if self.msrv.meets(cx, msrvs::FORMAT_ARGS_CAPTURE) {
                 linter.check_uninlined_args();
             }
+
+            linter.check_inlined_args();
         }
     }
 }
@@ -655,6 +697,151 @@ impl<'tcx> FormatArgsExpr<'_, 'tcx> {
             pos.kind != FormatArgPositionKind::Number
                 && (!self.ignore_mixed || matches!(arg.kind, FormatArgumentKind::Captured(_)))
         }
+    }
+
+    fn check_inlined_args(&self) {
+        if self.format_args.span.from_expansion() {
+            return;
+        }
+
+        let captured_names: Vec<Symbol> = self
+            .format_args
+            .arguments
+            .all_args()
+            .iter()
+            .filter_map(|arg| match arg.kind {
+                FormatArgumentKind::Captured(ident) => Some(ident.name),
+                _ => None,
+            })
+            .collect();
+
+        if captured_names.is_empty() {
+            return;
+        }
+
+        // Placeholder spans are only present when the format string is a literal
+        // written at the call site. A proc macro can assemble a call where they
+        // are not; linting would then point at unrelated source text.
+        if self
+            .format_arg_positions()
+            .any(|(pos, _)| self.captured_arg_index(pos).is_some() && pos.span.is_none())
+        {
+            return;
+        }
+
+        let fixes = self.collect_inlined_args_fixes(&captured_names);
+
+        span_lint_and_then(
+            self.cx,
+            INLINED_FORMAT_ARGS,
+            self.macro_call.span,
+            "variables should not be used directly in the format string",
+            |diag| {
+                if let Some(fixes) = fixes {
+                    // multiline span display suggestion is sometimes broken: https://github.com/rust-lang/rust/pull/102729#discussion_r988704308
+                    // in those cases, make the code suggestion hidden
+                    let multiline_fix = fixes
+                        .iter()
+                        .any(|(span, _)| self.cx.sess().source_map().is_multiline(*span));
+
+                    diag.multipart_suggestion_with_style(
+                        "change this to",
+                        fixes,
+                        Applicability::MachineApplicable,
+                        if multiline_fix { CompletelyHidden } else { ShowCode },
+                    );
+                }
+            },
+        );
+    }
+
+    fn collect_inlined_args_fixes(&self, captured_names: &[Symbol]) -> Option<Vec<(Span, String)>> {
+        let all_args = self.format_args.arguments.all_args();
+        let positional_count = all_args
+            .iter()
+            .filter(|arg| matches!(arg.kind, FormatArgumentKind::Normal))
+            .count();
+        let named_count = all_args.len() - positional_count - captured_names.len();
+
+        // The captured arguments are inserted before the explicit named ones, as
+        // positional arguments cannot follow named ones. That shifts the index of
+        // every named argument, so a numeric or implicit position already pointing
+        // into the named arguments would change meaning.
+        for (pos, _) in self.format_arg_positions() {
+            if pos.kind != FormatArgPositionKind::Named
+                && let Ok(index) = pos.index
+                && index >= positional_count
+            {
+                return None;
+            }
+        }
+
+        let mut fixes = Vec::new();
+        // The value the implicit position counter will have at this point in the
+        // suggested format string.
+        let mut implicit_position = 0;
+
+        for piece in &self.format_args.template {
+            let FormatArgsPiece::Placeholder(placeholder) = piece else {
+                continue;
+            };
+
+            // a `.*` precision consumes an implicit position just before the value does
+            if let Some(FormatCount::Argument(precision)) = &placeholder.format_options.precision
+                && precision.kind == FormatArgPositionKind::Implicit
+            {
+                implicit_position += 1;
+            }
+
+            let argument = &placeholder.argument;
+            if let Some(index) = self.captured_arg_index(argument) {
+                let span = argument.span?;
+                let new_index = index - named_count;
+                if new_index == implicit_position && !self.is_aliased(index) {
+                    implicit_position += 1;
+                    fixes.push((span, String::new()));
+                } else {
+                    fixes.push((span, new_index.to_string()));
+                }
+            } else if argument.kind == FormatArgPositionKind::Implicit {
+                implicit_position += 1;
+            }
+
+            if let Some(FormatCount::Argument(width)) = &placeholder.format_options.width
+                && let Some(index) = self.captured_arg_index(width)
+            {
+                fixes.push((width.span?, format!("{}$", index - named_count)));
+            }
+
+            if let Some(FormatCount::Argument(precision)) = &placeholder.format_options.precision
+                && let Some(index) = self.captured_arg_index(precision)
+            {
+                fixes.push((precision.span?, format!(".{}$", index - named_count)));
+            }
+        }
+
+        let insert_after = if positional_count == 0 {
+            self.format_args.span
+        } else {
+            hygiene::walk_chain(all_args[positional_count - 1].expr.span, self.format_args.span.ctxt())
+        };
+        fixes.push((
+            insert_after.shrink_to_hi(),
+            format!(", {}", captured_names.iter().join(", ")),
+        ));
+
+        Some(fixes)
+    }
+
+    /// Returns the index of the argument `pos` refers to if that argument is a
+    /// variable captured from the format string
+    fn captured_arg_index(&self, pos: &FormatArgPosition) -> Option<usize> {
+        let index = pos.index.ok()?;
+        matches!(
+            self.format_args.arguments.all_args().get(index)?.kind,
+            FormatArgumentKind::Captured(_)
+        )
+        .then_some(index)
     }
 
     fn check_format_in_format_args(&self, name: Symbol, arg: &Expr<'_>) {
