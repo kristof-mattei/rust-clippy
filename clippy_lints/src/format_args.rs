@@ -60,6 +60,45 @@ declare_clippy_lint! {
 
 declare_clippy_lint! {
     /// ### What it does
+    /// Detects variables captured directly in a format string, and suggests
+    /// passing them as separate arguments instead.
+    ///
+    /// ### Why restrict this?
+    /// Some projects prefer every formatted value to appear in the argument
+    /// list, keeping the format string free of variable captures.
+    ///
+    /// This lint is the inverse of
+    /// [`uninlined_format_args`](https://rust-lang.github.io/rust-clippy/main/index.html#uninlined_format_args);
+    /// do not enable both at the same time.
+    ///
+    /// ### Example
+    /// ```no_run
+    /// # let var = 42;
+    /// # let width = 1;
+    /// # let prec = 2;
+    /// format!("{var}");
+    /// format!("{var:?}");
+    /// format!("{var:width$}");
+    /// format!("{var:.prec$}");
+    /// ```
+    /// Use instead:
+    /// ```no_run
+    /// # let var = 42;
+    /// # let width = 1;
+    /// # let prec = 2;
+    /// format!("{}", var);
+    /// format!("{:?}", var);
+    /// format!("{:1$}", var, width);
+    /// format!("{:.1$}", var, prec);
+    /// ```
+    #[clippy::version = "1.99.0"]
+    pub INLINED_FORMAT_ARGS,
+    restriction,
+    "using captured variables directly in the format string"
+}
+
+declare_clippy_lint! {
+    /// ### What it does
     /// Detects [pointer format] as well as `Debug` formatting of raw pointers or function pointers
     /// or any types that have a derived `Debug` impl that recursively contains them.
     ///
@@ -167,45 +206,6 @@ declare_clippy_lint! {
     pub UNINLINED_FORMAT_ARGS,
     pedantic,
     "using non-inlined variables in `format!` calls"
-}
-
-declare_clippy_lint! {
-    /// ### What it does
-    /// Detects variables captured directly in a format string, and suggests
-    /// passing them as separate arguments instead.
-    ///
-    /// ### Why restrict this?
-    /// Some projects prefer every formatted value to appear in the argument
-    /// list, keeping the format string free of variable captures.
-    ///
-    /// This lint is the inverse of
-    /// [`uninlined_format_args`](https://rust-lang.github.io/rust-clippy/main/index.html#uninlined_format_args);
-    /// do not enable both at the same time.
-    ///
-    /// ### Example
-    /// ```no_run
-    /// # let var = 42;
-    /// # let width = 1;
-    /// # let prec = 2;
-    /// format!("{var}");
-    /// format!("{var:?}");
-    /// format!("{var:width$}");
-    /// format!("{var:.prec$}");
-    /// ```
-    /// Use instead:
-    /// ```no_run
-    /// # let var = 42;
-    /// # let width = 1;
-    /// # let prec = 2;
-    /// format!("{}", var);
-    /// format!("{:?}", var);
-    /// format!("{:1$}", var, width);
-    /// format!("{:.1$}", var, prec);
-    /// ```
-    #[clippy::version = "1.99.0"]
-    pub INLINED_FORMAT_ARGS,
-    restriction,
-    "using captured variables directly in the format string"
 }
 
 declare_clippy_lint! {
