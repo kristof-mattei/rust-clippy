@@ -20,8 +20,8 @@ use rustc_ast::{
     FormatOptions, FormatPlaceholder, Mutability,
 };
 use rustc_data_structures::fx::FxHashMap;
-use rustc_errors::Applicability;
 use rustc_errors::SuggestionStyle::{CompletelyHidden, ShowCode};
+use rustc_errors::{Applicability, Diag};
 use rustc_hir::attrs::RustcVersion;
 use rustc_hir::{Expr, ExprKind, LangItem, find_attr};
 use rustc_lint::{LateContext, LateLintPass, LintContext as _};
@@ -648,12 +648,6 @@ impl<'tcx> FormatArgsExpr<'_, 'tcx> {
             return;
         }
 
-        // multiline span display suggestion is sometimes broken: https://github.com/rust-lang/rust/pull/102729#discussion_r988704308
-        // in those cases, make the code suggestion hidden
-        let multiline_fix = fixes
-            .iter()
-            .any(|(span, _)| self.cx.sess().source_map().is_multiline(*span));
-
         // Suggest removing each argument only once, for example in `format!("{0} {0}", arg)`.
         fixes.sort_unstable_by_key(|(span, _)| *span);
         fixes.dedup_by_key(|(span, _)| *span);
@@ -663,14 +657,7 @@ impl<'tcx> FormatArgsExpr<'_, 'tcx> {
             UNINLINED_FORMAT_ARGS,
             self.macro_call.span,
             "variables can be used directly in the `format!` string",
-            |diag| {
-                diag.multipart_suggestion_with_style(
-                    "change this to",
-                    fixes,
-                    Applicability::MachineApplicable,
-                    if multiline_fix { CompletelyHidden } else { ShowCode },
-                );
-            },
+            |diag| self.suggest_fixes(diag, fixes),
         );
     }
 
@@ -700,6 +687,21 @@ impl<'tcx> FormatArgsExpr<'_, 'tcx> {
             pos.kind != FormatArgPositionKind::Number
                 && (!self.ignore_mixed || matches!(arg.kind, FormatArgumentKind::Captured(_)))
         }
+    }
+
+    fn suggest_fixes(&self, diag: &mut Diag<'_, ()>, fixes: Vec<(Span, String)>) {
+        // multiline span display suggestion is sometimes broken: https://github.com/rust-lang/rust/pull/102729#discussion_r988704308
+        // in those cases, make the code suggestion hidden
+        let multiline_fix = fixes
+            .iter()
+            .any(|(span, _)| self.cx.sess().source_map().is_multiline(*span));
+
+        diag.multipart_suggestion_with_style(
+            "change this to",
+            fixes,
+            Applicability::MachineApplicable,
+            if multiline_fix { CompletelyHidden } else { ShowCode },
+        );
     }
 
     fn check_inlined_args(&self) {
@@ -741,18 +743,7 @@ impl<'tcx> FormatArgsExpr<'_, 'tcx> {
             "variables should not be used directly in the format string",
             |diag| {
                 if let Some(fixes) = fixes {
-                    // multiline span display suggestion is sometimes broken: https://github.com/rust-lang/rust/pull/102729#discussion_r988704308
-                    // in those cases, make the code suggestion hidden
-                    let multiline_fix = fixes
-                        .iter()
-                        .any(|(span, _)| self.cx.sess().source_map().is_multiline(*span));
-
-                    diag.multipart_suggestion_with_style(
-                        "change this to",
-                        fixes,
-                        Applicability::MachineApplicable,
-                        if multiline_fix { CompletelyHidden } else { ShowCode },
-                    );
+                    self.suggest_fixes(diag, fixes);
                 }
             },
         );
